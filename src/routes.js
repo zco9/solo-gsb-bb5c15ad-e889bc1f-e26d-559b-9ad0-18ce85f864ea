@@ -6,6 +6,13 @@ const { evacuationSnapshot } = require('./evacuation');
 const { buildComparison } = require('./baseline');
 const { toMarkdown } = require('./report');
 const { findCycle, cycleMessage, MAX_WAIT_SECONDS } = require('./dependencies');
+const {
+  TEMPLATE_CSV,
+  MAX_CSV_CHARS,
+  computeDataVersion,
+  buildPreview,
+  applyPlan,
+} = require('./csvImport');
 
 const router = express.Router();
 
@@ -278,6 +285,44 @@ router.delete('/dependencies/:id', (req, res) => {
   data.dependencies.splice(idx, 1);
   store.save();
   res.status(204).end();
+});
+
+/* ---------- 排练数据 CSV 导入 ---------- */
+
+/** 下载 CSV 导入模板（前置 BOM，Excel 可直接打开） */
+router.get('/import/template', (req, res) => {
+  const filename = encodeURIComponent('排练数据导入模板.csv');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename=template.csv; filename*=UTF-8''${filename}`);
+  res.send('﻿' + TEMPLATE_CSV);
+});
+
+/** 上传预览：逐行校验并生成带数据版本的导入计划；存在错误行时 plan 为 null */
+router.post('/import/preview', (req, res) => {
+  try {
+    const csv = req.body && req.body.csv;
+    if (typeof csv !== 'string' || !csv.trim()) {
+      return res.status(400).json({ error: '请上传 CSV 文件内容' });
+    }
+    if (csv.length > MAX_CSV_CHARS) {
+      return res.status(400).json({ error: 'CSV 文件过大，请拆分后分批导入' });
+    }
+    res.json(buildPreview(store.load(), csv));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || '预览失败' });
+  }
+});
+
+/** 提交导入计划：数据版本不一致返回 409（需重新预览）；否则一次性写入全部新演员与口令 */
+router.post('/import/commit', (req, res) => {
+  try {
+    const data = store.load();
+    const imported = applyPlan(data, req.body && req.body.plan);
+    store.save();
+    res.status(201).json({ imported, dataVersion: computeDataVersion(data) });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || '导入失败' });
+  }
 });
 
 /* ---------- 通用 CRUD ---------- */

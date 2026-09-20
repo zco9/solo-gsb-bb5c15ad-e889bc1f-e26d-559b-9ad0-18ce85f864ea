@@ -81,6 +81,25 @@
       <div id="dependency-results"></div>
     </section>
 
+    <!-- 排练数据 CSV 导入 -->
+    <section class="card" id="panel-import">
+      <h2>📥 排练数据 CSV 导入</h2>
+      <p class="mode-hint">
+        先下载模板按列填写：<strong>姓名、角色、目标区域、时间</strong>（支持 <code>90</code> 秒或 <code>01:30</code> 分:秒）、停留秒数（0～600，可空）、说明（可空）。
+        上传后逐行预览校验：按「姓名+角色」复用现有演员（无匹配则自动新建）、按区域名解析目标区域；
+        逐行标出时间 / 停留格式错误、未知或重名区域、文件内重复与现有口令冲突，<strong>存在错误行时禁止提交</strong>。
+        预览通过生成带数据版本的导入计划；提交时若底库已被修改将返回 409 并要求重新预览，否则一次性写入全部新演员与口令（任何失败都不会部分落库）。
+      </p>
+      <form id="form-import" class="entity-form import-form">
+        <input type="file" id="import-file" accept=".csv,text/csv" />
+        <div class="form-buttons">
+          <a class="btn" href="/api/import/template" download>⬇️ 下载模板</a>
+          <button type="submit" class="btn btn-accent">🔍 上传预览</button>
+        </div>
+      </form>
+      <div id="import-results"></div>
+    </section>
+
     <!-- 数据管理 -->
     <div class="panels">
       <section class="card" id="panel-areas">

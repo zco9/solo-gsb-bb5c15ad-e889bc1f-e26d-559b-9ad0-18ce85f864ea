@@ -6,7 +6,7 @@ const routes = require('./src/routes');
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '5mb' })); // CSV 导入预览随请求体上传文件文本，放宽默认 100kb 限制
 app.use('/api', routes);
 app.use(express.static(path.join(__dirname, 'public')));
 

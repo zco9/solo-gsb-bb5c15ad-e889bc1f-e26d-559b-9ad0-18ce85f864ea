@@ -65,7 +65,9 @@ async function api(path, method = 'GET', body) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `请求失败（${res.status}）`);
+    const error = new Error(err.error || `请求失败（${res.status}）`);
+    error.status = res.status;
+    throw error;
   }
   return res.status === 204 ? null : res.json();
 }
@@ -903,6 +905,133 @@ function bindDependencies() {
   });
 }
 
+/* ---------- 排练数据 CSV 导入 ---------- */
+
+const importState = {
+  preview: null, // 最近一次预览结果（含 rows / summary / plan）
+  stale: false, // 提交时底库已变化（409）：计划失效，需重新预览
+};
+
+/** 渲染导入预览：汇总徽章 + 逐行校验表 + 提交入口（错误行存在时禁止提交） */
+function renderImportPreview() {
+  const el = $('import-results');
+  const p = importState.preview;
+  if (!p) {
+    el.innerHTML = '<p class="empty-hint">选择 CSV 文件后点击「上传预览」，逐行校验全部通过后方可提交导入。</p>';
+    return;
+  }
+  const s = p.summary;
+  const chips = [
+    `<span class="import-chip">数据行 <strong>${s.totalRows}</strong></span>`,
+    `<span class="import-chip ${s.validRows ? 'good' : ''}">可导入 <strong>${s.validRows}</strong></span>`,
+    `<span class="import-chip ${s.errorRows ? 'bad' : ''}">错误行 <strong>${s.errorRows}</strong></span>`,
+    `<span class="import-chip">新增演员 <strong>${s.newActors}</strong></span>`,
+    `<span class="import-chip">复用演员 <strong>${s.reusedActors}</strong></span>`,
+    `<span class="import-chip">新增口令 <strong>${s.newCues}</strong></span>`,
+  ].join('');
+
+  const rows = p.rows
+    .map((r) => {
+      const ok = r.errors.length === 0;
+      const actorCell =
+        r.actorAction === 'reuse'
+          ? '<span class="status-pill ok">复用现有</span>'
+          : r.actorAction === 'create'
+            ? '<span class="status-pill new">新建演员</span>'
+            : '<span class="empty-hint">—</span>';
+      const timeCell =
+        r.time !== null && r.time !== undefined
+          ? `${escapeHtml(r.timeText)}<span class="time-detail">= ${fmtTime(r.time)}</span>`
+          : escapeHtml(r.timeText || '—');
+      const checkCell = ok
+        ? '<span class="status-pill ok">✅ 可导入</span>'
+        : `<span class="status-pill fail">❌ 错误</span><span class="import-errors">${r.errors.map(escapeHtml).join('<br>')}</span>`;
+      return `<tr class="${ok ? 'import-ok' : 'import-err'}">
+        <td>${r.line}</td>
+        <td>${escapeHtml(r.name)}</td>
+        <td>${escapeHtml(r.role)}</td>
+        <td>${escapeHtml(r.areaName)}</td>
+        <td>${timeCell}</td>
+        <td>${escapeHtml(r.dwellText || '—')}</td>
+        <td>${escapeHtml(r.note)}</td>
+        <td>${actorCell}</td>
+        <td>${checkCell}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const canCommit = !!p.plan && !importState.stale;
+  let actionHint;
+  if (importState.stale) {
+    actionHint = '<span class="import-hint error">⚠️ 底库数据已变化，本次预览计划已失效，请重新上传预览后再提交。</span>';
+  } else if (p.plan) {
+    actionHint = '<span class="import-hint">计划已绑定当前数据版本；提交前若底库被修改将要求重新预览。</span>';
+  } else {
+    actionHint = '<span class="import-hint error">存在错误行，禁止提交；请修正 CSV 后重新上传预览。</span>';
+  }
+
+  el.innerHTML = `
+    <div class="import-chips">${chips}</div>
+    <table class="import-table">
+      <thead><tr><th>行号</th><th>姓名</th><th>角色</th><th>目标区域</th><th>时间</th><th>停留</th><th>说明</th><th>演员处理</th><th>校验结果</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="import-actions">
+      <button type="button" class="btn btn-accent" id="import-commit" ${canCommit ? '' : 'disabled'}>✅ 提交导入（新增演员 ${s.newActors} 位 / 口令 ${s.newCues} 条）</button>
+      ${actionHint}
+    </div>`;
+}
+
+function bindImport() {
+  $('form-import').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = $('import-file').files[0];
+    if (!file) {
+      toast('请先选择 CSV 文件（可先下载模板）', true);
+      return;
+    }
+    try {
+      const csv = await file.text();
+      const preview = await api('/api/import/preview', 'POST', { csv });
+      importState.preview = preview;
+      importState.stale = false;
+      renderImportPreview();
+      if (preview.plan) toast(`预览通过：${preview.summary.validRows} 行可导入，确认无误后提交`);
+      else toast(`发现 ${preview.summary.errorRows} 个错误行，已禁止提交`, true);
+    } catch (err) {
+      importState.preview = null;
+      importState.stale = false;
+      renderImportPreview();
+      toast(err.message, true);
+    }
+  });
+
+  // 提交导入（事件委托，按钮随预览结果重绘）
+  $('import-results').addEventListener('click', async (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement) || t.id !== 'import-commit') return;
+    const plan = importState.preview && importState.preview.plan;
+    if (!plan || importState.stale) return;
+    try {
+      const res = await api('/api/import/commit', 'POST', { plan });
+      importState.preview = null;
+      importState.stale = false;
+      $('import-file').value = '';
+      renderImportPreview();
+      await refresh();
+      refreshSelects();
+      toast(`导入成功：新增演员 ${res.imported.actors} 位、口令 ${res.imported.cues} 条，已重新校验`);
+    } catch (err) {
+      if (err.status === 409) {
+        // 底库已变化：保留预览行展示，标记计划失效并要求重新预览
+        importState.stale = true;
+        renderImportPreview();
+      }
+      toast(err.message, true);
+    }
+  });
+}
+
 /* ---------- 下拉框选项 ---------- */
 
 function fillSelect(el, items, placeholder) {
@@ -1200,6 +1329,8 @@ function bindHeaderActions() {
   bindHeaderActions();
   bindEvacuation();
   bindDependencies();
+  bindImport();
+  renderImportPreview();
   setMode(state.mode);
   try {
     await refresh();
