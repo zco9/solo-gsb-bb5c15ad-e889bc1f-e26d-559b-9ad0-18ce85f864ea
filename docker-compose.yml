@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    container_name: stage-blocking-validator
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      # 持久化走位数据；删除卷后重启可重新初始化示例数据
+      - stage-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  stage-data:

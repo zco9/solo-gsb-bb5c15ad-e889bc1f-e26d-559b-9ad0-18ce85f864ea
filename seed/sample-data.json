@@ -1,0 +1,50 @@
+{
+  "areas": [
+    { "id": "area-backstage", "name": "后台化妆间", "description": "演员候场区" },
+    { "id": "area-wing-r", "name": "侧台右", "description": "舞台右侧上场口" },
+    { "id": "area-wing-l", "name": "侧台左", "description": "舞台左侧下场口" },
+    { "id": "area-center", "name": "舞台中央", "description": "主表演区" },
+    { "id": "area-upstage", "name": "舞台后区", "description": "靠近天幕区域" },
+    { "id": "area-downstage", "name": "舞台前区", "description": "靠近观众席区域" },
+    { "id": "area-balcony", "name": "二层平台", "description": "需经楼梯上下" },
+    { "id": "area-pit", "name": "乐池", "description": "舞台前方下沉区" },
+    { "id": "area-roof", "name": "天台布景", "description": "独立布景，暂无连接通道" }
+  ],
+  "edges": [
+    { "id": "edge-wingr-center", "a": "area-wing-r", "b": "area-center", "seconds": 4, "closures": [ { "start": 10, "end": 14 } ] },
+    { "id": "edge-wingl-center", "a": "area-wing-l", "b": "area-center", "seconds": 4, "closures": [] },
+    { "id": "edge-center-up", "a": "area-center", "b": "area-upstage", "seconds": 3, "closures": [ { "start": 8, "end": 10 }, { "start": 14, "end": 16 } ] },
+    { "id": "edge-center-down", "a": "area-center", "b": "area-downstage", "seconds": 3, "closures": [] },
+    { "id": "edge-up-backstage", "a": "area-upstage", "b": "area-backstage", "seconds": 8, "closures": [] },
+    { "id": "edge-wingr-backstage", "a": "area-wing-r", "b": "area-backstage", "seconds": 10, "closures": [] },
+    { "id": "edge-wingl-backstage", "a": "area-wing-l", "b": "area-backstage", "seconds": 10, "closures": [] },
+    { "id": "edge-wingr-up", "a": "area-wing-r", "b": "area-upstage", "seconds": 6, "closures": [] },
+    { "id": "edge-wingl-up", "a": "area-wing-l", "b": "area-upstage", "seconds": 6, "closures": [] },
+    { "id": "edge-up-balcony", "a": "area-upstage", "b": "area-balcony", "seconds": 12, "closures": [], "capacity": 2 },
+    { "id": "edge-down-pit", "a": "area-downstage", "b": "area-pit", "seconds": 6, "closures": [] }
+  ],
+  "actors": [
+    { "id": "actor-zhang", "name": "张三", "role": "饰 王子" },
+    { "id": "actor-li", "name": "李四", "role": "饰 公主" },
+    { "id": "actor-wang", "name": "王五", "role": "饰 旁白" }
+  ],
+  "cues": [
+    { "id": "cue-z1", "actorId": "actor-zhang", "areaId": "area-backstage", "time": 0, "dwell": 0, "note": "开场候场" },
+    { "id": "cue-z2", "actorId": "actor-zhang", "areaId": "area-center", "time": 20, "dwell": 8, "note": "上台亮相（亮相停留 8 秒）" },
+    { "id": "cue-z3", "actorId": "actor-zhang", "areaId": "area-balcony", "time": 35, "dwell": 0, "note": "登上二层平台" },
+    { "id": "cue-z4", "actorId": "actor-zhang", "areaId": "area-pit", "time": 40, "dwell": 0, "note": "跃入乐池（时间过紧示例）" },
+    { "id": "cue-z5", "actorId": "actor-zhang", "areaId": "area-wing-l", "time": 90, "dwell": 0, "note": "侧台左退场" },
+    { "id": "cue-l1", "actorId": "actor-li", "areaId": "area-wing-r", "time": 10, "dwell": 0, "note": "侧台右候场" },
+    { "id": "cue-l2", "actorId": "actor-li", "areaId": "area-center", "time": 20, "dwell": 10, "note": "舞台中央独唱（演唱停留 10 秒）" },
+    { "id": "cue-l3", "actorId": "actor-li", "areaId": "area-backstage", "time": 60, "dwell": 0, "note": "回后台换装" },
+    { "id": "cue-l4", "actorId": "actor-li", "areaId": "area-balcony", "time": 75, "dwell": 0, "note": "二层平台重逢（时间过紧示例）" },
+    { "id": "cue-l5", "actorId": "actor-li", "areaId": "area-downstage", "time": 120, "dwell": 0, "note": "台前谢幕" },
+    { "id": "cue-w1", "actorId": "actor-wang", "areaId": "area-downstage", "time": 0, "dwell": 0, "note": "开场旁白" },
+    { "id": "cue-w2", "actorId": "actor-wang", "areaId": "area-roof", "time": 30, "dwell": 0, "note": "天台布景（不可达示例）" }
+  ],
+  "dependencies": [
+    { "id": "dep-l2-z3", "predecessorId": "cue-l2", "successorId": "cue-z3", "waitSeconds": 0, "note": "李四独唱结束后张三才能登上二层平台（区段独立模式违约、延误传导模式满足的模式差异演示）" },
+    { "id": "dep-z2-l4", "predecessorId": "cue-z2", "successorId": "cue-l4", "waitSeconds": 5, "note": "张三上台亮相后至少 5 秒李四才能上二层平台（跨演员满足演示）" },
+    { "id": "dep-l2-w2", "predecessorId": "cue-l2", "successorId": "cue-w2", "waitSeconds": 0, "note": "李四独唱后王五方可前往天台（后置口令不可达 → 无法判定演示）" }
+  ]
+}

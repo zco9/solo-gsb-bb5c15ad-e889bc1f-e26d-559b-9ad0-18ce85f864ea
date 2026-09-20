@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>舞台走位校验系统</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎭</span>
+      <div>
+        <h1>舞台走位校验系统</h1>
+        <p class="subtitle">区域连接图 · 通道容量与封闭时段 · 到位口令时间校验 · 通道占用冲突</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btn-refresh" class="btn">🔄 重新校验</button>
+      <a id="btn-export" class="btn btn-accent" href="/api/report" download>📄 导出校验报告</a>
+      <button id="btn-reset" class="btn btn-ghost">↩️ 恢复示例数据</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- 校验结果 -->
+    <section class="card" id="validation-card">
+      <div class="card-head">
+        <h2>校验结果</h2>
+        <div class="mode-switch" id="mode-switch" role="tablist">
+          <button type="button" class="mode-btn" data-mode="propagate">⛓ 连续口令延误传导</button>
+          <button type="button" class="mode-btn" data-mode="classic">📐 区段独立校验</button>
+        </div>
+      </div>
+      <p class="mode-hint" id="mode-hint"></p>
+      <div id="baseline-panel" class="baseline-panel"></div>
+      <div id="summary" class="summary"></div>
+      <div id="conflict-overview" class="conflict-overview"></div>
+      <div id="validation-results"></div>
+    </section>
+
+    <!-- 应急疏散快照 -->
+    <section class="card" id="evacuation-card">
+      <div class="card-head">
+        <h2>🚨 应急疏散快照</h2>
+      </div>
+      <p class="mode-hint">
+        输入事件时刻并勾选一个或多个出口区域：按当前校验模式的实际路线还原每位演员当时的位置（区域等待 / 停留 / 通道行进中）。
+        位于通道者先按原方向走完剩余路程，再从到达区域按事件时刻之后的封闭时段计算到任一出口的最早疏散路线；位于区域者从事件时刻直接计算；
+        因不可达链无法确定位置的演员单独标为位置未知，不做猜测。结果按最晚撤离优先排序，导出的 Markdown 报告会追加同一快照。
+      </p>
+      <form id="form-evacuation" class="entity-form evac-form">
+        <input type="text" id="evac-time" placeholder="事件时刻，如 25 或 00:25" required />
+        <div class="evac-exits" id="evac-exits"></div>
+        <div class="form-buttons">
+          <button type="submit" class="btn btn-accent" id="evac-submit">生成疏散快照</button>
+          <button type="button" class="btn btn-ghost hidden" id="evac-clear">清除快照</button>
+        </div>
+      </form>
+      <div id="evacuation-results"></div>
+    </section>
+
+    <!-- 跨演员口令依赖 -->
+    <section class="card" id="panel-dependencies">
+      <h2>🔗 跨演员口令依赖</h2>
+      <p class="mode-hint">
+        在两条口令之间维护「前置口令完成（当前模式下实际到达 + 停留时长）后至少等待 N 秒，后置口令才可实际出发」的有向约束（两条口令可属于不同演员）。
+        保存前会检查整张依赖图，<strong>成环时拒绝写入并提示闭环口令链</strong>。下方结果按当前校验模式即时重算：
+        ✅ 满足、❌ 违约（附相差秒数）、❓ 无法判定（任一端口令不可达或无实际出发时刻）。删除口令会自动清理相关依赖。
+      </p>
+      <form id="form-dependency" class="entity-form dep-form">
+        <select id="dep-before" required></select>
+        <span class="dep-arrow">—等待 ≥</span>
+        <input type="number" id="dep-wait" min="0" max="3600" step="1" placeholder="秒" class="dep-wait-input" required />
+        <span class="dep-arrow">秒→</span>
+        <select id="dep-after" required></select>
+        <div class="form-buttons">
+          <button type="submit" class="btn btn-accent" id="dep-submit">添加依赖</button>
+        </div>
+      </form>
+      <div id="dependency-results"></div>
+    </section>
+
+    <!-- 数据管理 -->
+    <div class="panels">
+      <section class="card" id="panel-areas">
+        <h2>舞台区域</h2>
+        <form id="form-area" class="entity-form">
+          <input type="hidden" id="area-id" />
+          <input type="text" id="area-name" placeholder="区域名称，如：舞台中央" required maxlength="30" />
+          <input type="text" id="area-desc" placeholder="备注（可选）" maxlength="60" />
+          <div class="form-buttons">
+            <button type="submit" class="btn btn-accent" id="area-submit">添加区域</button>
+            <button type="button" class="btn btn-ghost hidden" id="area-cancel">取消编辑</button>
+          </div>
+        </form>
+        <table>
+          <thead><tr><th>名称</th><th>备注</th><th class="col-ops">操作</th></tr></thead>
+          <tbody id="areas-tbody"></tbody>
+        </table>
+      </section>
+
+      <section class="card" id="panel-edges">
+        <h2>区域连接（通行耗时 · 容量 · 封闭时段）</h2>
+        <form id="form-edge" class="entity-form">
+          <input type="hidden" id="edge-id" />
+          <select id="edge-a" required></select>
+          <select id="edge-b" required></select>
+          <input type="number" id="edge-seconds" placeholder="耗时(秒)" min="0" step="1" required />
+          <input type="number" id="edge-capacity" placeholder="容量(1~10)" min="1" max="10" step="1" title="同一时刻允许并发占用该通道的人数（1～10），缺省 1" />
+          <div class="closures-editor" id="closures-editor">
+            <div class="closures-head">
+              <span>🚧 通道封闭时段（秒，可添加多段）</span>
+              <button type="button" class="btn btn-small" id="btn-add-closure">＋ 添加时段</button>
+            </div>
+            <div id="closures-list"></div>
+            <p class="closures-hint">封闭规则：开始 ≤ t &lt; 结束 内通道不可通行；校验时将在前一区域等待或自动绕行。容量为同一时刻允许并发占用的人数（1～10，缺省 1），超过即产生通道占用冲突。</p>
+          </div>
+          <div class="form-buttons">
+            <button type="submit" class="btn btn-accent" id="edge-submit">添加连接</button>
+            <button type="button" class="btn btn-ghost hidden" id="edge-cancel">取消编辑</button>
+          </div>
+        </form>
+        <table>
+          <thead><tr><th>区域 A</th><th>区域 B</th><th>通行耗时</th><th>容量</th><th>封闭时段</th><th class="col-ops">操作</th></tr></thead>
+          <tbody id="edges-tbody"></tbody>
+        </table>
+      </section>
+
+      <section class="card" id="panel-actors">
+        <h2>演员</h2>
+        <form id="form-actor" class="entity-form">
+          <input type="hidden" id="actor-id" />
+          <input type="text" id="actor-name" placeholder="演员姓名，如：张三" required maxlength="30" />
+          <input type="text" id="actor-role" placeholder="角色（可选），如：饰 王子" maxlength="30" />
+          <div class="form-buttons">
+            <button type="submit" class="btn btn-accent" id="actor-submit">添加演员</button>
+            <button type="button" class="btn btn-ghost hidden" id="actor-cancel">取消编辑</button>
+          </div>
+        </form>
+        <table>
+          <thead><tr><th>姓名</th><th>角色</th><th class="col-ops">操作</th></tr></thead>
+          <tbody id="actors-tbody"></tbody>
+        </table>
+      </section>
+
+      <section class="card" id="panel-cues">
+        <h2>到位口令</h2>
+        <form id="form-cue" class="entity-form">
+          <input type="hidden" id="cue-id" />
+          <select id="cue-actor" required></select>
+          <select id="cue-area" required></select>
+          <input type="text" id="cue-time" placeholder="时间，如 90 或 01:30" required />
+          <input type="number" id="cue-dwell" placeholder="停留(秒) 0~600" min="0" max="600" step="1" title="在该区域需停留的秒数（0～600），用于连续口令延误传导模式" />
+          <input type="text" id="cue-note" placeholder="口令说明（可选）" maxlength="60" />
+          <div class="form-buttons">
+            <button type="submit" class="btn btn-accent" id="cue-submit">添加口令</button>
+            <button type="button" class="btn btn-ghost hidden" id="cue-cancel">取消编辑</button>
+          </div>
+        </form>
+        <table>
+          <thead><tr><th>演员</th><th>时间</th><th>目标区域</th><th>停留</th><th>说明</th><th class="col-ops">操作</th></tr></thead>
+          <tbody id="cues-tbody"></tbody>
+        </table>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

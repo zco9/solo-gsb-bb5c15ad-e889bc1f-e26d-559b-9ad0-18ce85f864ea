@@ -1,0 +1,16 @@
+{
+  "name": "stage-blocking-validator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "舞台走位校验系统：舞台区域连接图 + 演员到位口令时间校验",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
