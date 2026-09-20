@@ -81,6 +81,31 @@
       <div id="dependency-results"></div>
     </section>
 
+    <!-- 排练数据 CSV 导入 -->
+    <section class="card" id="panel-import">
+      <h2>📥 排练数据 CSV 导入</h2>
+      <p class="mode-hint">
+        下载模板填写排练口令后上传：系统按<strong>「姓名 + 角色」</strong>复用演员（无匹配则自动新建，同名同角色不唯一会报错）、
+        按<strong>区域名</strong>精确解析目标区域，逐行校验<strong>时间 / 停留格式</strong>、<strong>未知 / 重名区域</strong>、<strong>文件内重复</strong>与<strong>现有口令冲突</strong>。
+        <strong>存在错误行时禁止提交</strong>；预览会生成带数据版本的导入计划，提交时若底库已被修改将要求重新预览。
+        时间支持秒数（如 <code>90</code>）或 <code>mm:ss</code>（如 <code>01:30</code>），停留秒数为 0～600 的整数（留空按 0）。
+      </p>
+      <div class="import-toolbar">
+        <a class="btn" href="/api/import/template" download>⬇️ 下载 CSV 模板</a>
+        <label class="btn btn-accent import-file-btn">
+          📂 选择 CSV 文件上传预览
+          <input type="file" id="import-file" accept=".csv,text/csv" hidden />
+        </label>
+        <button type="button" class="btn btn-ghost hidden" id="import-clear">清空预览</button>
+        <span class="import-filename" id="import-filename"></span>
+      </div>
+      <div id="import-message"></div>
+      <div id="import-preview"></div>
+      <div class="form-buttons hidden" id="import-actions">
+        <button type="button" class="btn btn-accent" id="import-submit" disabled>确认提交导入</button>
+      </div>
+    </section>
+
     <!-- 数据管理 -->
     <div class="panels">
       <section class="card" id="panel-areas">

@@ -6,7 +6,7 @@ const routes = require('./src/routes');
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 app.use('/api', routes);
 app.use(express.static(path.join(__dirname, 'public')));
 

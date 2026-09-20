@@ -6,6 +6,12 @@ const { evacuationSnapshot } = require('./evacuation');
 const { buildComparison } = require('./baseline');
 const { toMarkdown } = require('./report');
 const { findCycle, cycleMessage, MAX_WAIT_SECONDS } = require('./dependencies');
+const {
+  buildImportPlan,
+  commitImport,
+  ImportFileError,
+  TEMPLATE_HEADER,
+} = require('./import');
 
 const router = express.Router();
 
@@ -278,6 +284,72 @@ router.delete('/dependencies/:id', (req, res) => {
   data.dependencies.splice(idx, 1);
   store.save();
   res.status(204).end();
+});
+
+/* ---------- 排练数据 CSV 导入 ---------- */
+
+/** CSV 模板下载（带 UTF-8 BOM，Excel 直接打开中文不乱码） */
+router.get('/import/template', (req, res) => {
+  const lines = [
+    TEMPLATE_HEADER.join(','),
+    // 两行填写示例：直接上传会按普通数据行参与校验（可能与底库冲突），正式导入前请删除或替换
+    ['张三', '饰 王子', '舞台中央', '01:30', '8', '示例行：可直接删除'].join(','),
+    ['赵六', '饰 侍卫', '侧台右', '45', '', '新演员将自动创建；停留秒数留空按 0'].join(','),
+  ];
+  const content = '﻿' + lines.join('\r\n') + '\r\n';
+  const filename = encodeURIComponent('排练数据导入模板.csv');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename=rehearsal-template.csv; filename*=UTF-8''${filename}`);
+  res.send(content);
+});
+
+/** 上传预览：解析 CSV，逐行返回问题与带数据版本的导入计划（不写库） */
+router.post('/import/preview', (req, res) => {
+  const data = store.load();
+  const csv = typeof (req.body && req.body.csv) === 'string' ? req.body.csv : '';
+  if (csv.trim() === '') return res.status(400).json({ error: '请先选择排练数据 CSV 文件' });
+  let plan;
+  try {
+    plan = buildImportPlan(data, csv);
+  } catch (err) {
+    if (err instanceof ImportFileError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  res.json(plan);
+});
+
+/** 提交导入：底库版本变化返回 409 要求重新预览；否则一次性写入全部新演员和口令 */
+router.post('/import/commit', (req, res) => {
+  const data = store.load();
+  const csv = typeof (req.body && req.body.csv) === 'string' ? req.body.csv : '';
+  const expectedVersion = req.body && req.body.version;
+  if (csv.trim() === '') return res.status(400).json({ error: '提交内容为空，请重新选择 CSV 文件' });
+  if (typeof expectedVersion !== 'string') {
+    return res.status(400).json({ error: '缺少数据版本，请先重新预览后再提交' });
+  }
+
+  let result;
+  try {
+    result = commitImport(data, csv, expectedVersion);
+  } catch (err) {
+    if (err instanceof ImportFileError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+
+  if (result.status === 'stale') {
+    return res.status(409).json({
+      error: '底库数据已变化（演员 / 区域 / 口令被修改），请重新预览后再提交',
+      currentVersion: result.currentVersion,
+    });
+  }
+  if (result.status === 'invalid') {
+    return res.status(400).json({ error: 'CSV 中仍存在错误行，请修正后重新预览', plan: result.plan });
+  }
+  res.status(201).json({
+    createdActors: result.createdActors,
+    createdCues: result.createdCues,
+    version: result.version,
+  });
 });
 
 /* ---------- 通用 CRUD ---------- */

@@ -13,6 +13,9 @@ const state = {
   mode: localStorage.getItem('validate-mode') === 'classic' ? 'classic' : 'propagate',
   evacuation: null, // 已生成快照的参数 { time, exits: [areaId] }；null 表示未启用
   evacResult: null, // 最近一次应急疏散快照结果
+  importCsv: null, // 最近一次选择的 CSV 原文
+  importPlan: null, // 服务端返回的导入计划（含 rows / newActors / summary / version）
+  importFileName: '',
 };
 
 /* ---------- 工具 ---------- */
@@ -65,7 +68,10 @@ async function api(path, method = 'GET', body) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `请求失败（${res.status}）`);
+    const e = new Error(err.error || `请求失败（${res.status}）`);
+    e.status = res.status;
+    e.payload = err;
+    throw e;
   }
   return res.status === 204 ? null : res.json();
 }
@@ -1192,6 +1198,184 @@ function bindHeaderActions() {
   });
 }
 
+/* ---------- 排练数据 CSV 导入 ---------- */
+
+const IMPORT_ACTOR_TAG = {
+  reuse: { cls: 'reuse', text: '复用演员' },
+  new: { cls: 'new', text: '新演员' },
+  ambiguous: { cls: 'bad', text: '演员重名' },
+};
+const IMPORT_AREA_TAG = {
+  ok: { cls: 'reuse', text: '区域已存在' },
+  unknown: { cls: 'bad', text: '未知区域' },
+  ambiguous: { cls: 'bad', text: '重名区域' },
+};
+
+function renderImportMessage(html = '', isError = false) {
+  const el = $('import-message');
+  el.className = isError ? 'import-message error' : 'import-message';
+  el.innerHTML = html;
+}
+
+/** 渲染预览：汇总徽章 + 逐行问题表 + 提交按钮（有错误行时禁用） */
+function renderImportPlan(plan) {
+  const s = plan.summary;
+  const chips = [
+    `<span class="imp-chip">数据行 <strong>${s.totalRows}</strong></span>`,
+    `<span class="imp-chip ${s.validRows ? 'good' : ''}">可导入 <strong>${s.validRows}</strong></span>`,
+    `<span class="imp-chip ${s.errorRows ? 'bad' : ''}">错误行 <strong>${s.errorRows}</strong></span>`,
+    `<span class="imp-chip ${s.newActors ? 'new' : ''}">新增演员 <strong>${s.newActors}</strong></span>`,
+    `<span class="imp-chip ${s.newCues ? 'new' : ''}">新增口令 <strong>${s.newCues}</strong></span>`,
+    `<span class="imp-chip ${s.duplicates ? 'bad' : ''}">文件内重复 <strong>${s.duplicates}</strong></span>`,
+    `<span class="imp-chip ${s.conflicts ? 'bad' : ''}">现有口令冲突 <strong>${s.conflicts}</strong></span>`,
+  ].join('');
+
+  const rows = plan.rows
+    .map((r) => {
+      const actorTag = IMPORT_ACTOR_TAG[r.actorStatus];
+      const areaTag = IMPORT_AREA_TAG[r.areaStatus];
+      const timeCell =
+        r.time === null
+          ? `<span class="imp-bad">${escapeHtml(r.timeRaw || '（空）')}</span>`
+          : `${fmtTime(r.time)}<span class="time-detail">${escapeHtml(r.timeRaw)}</span>`;
+      const dwellCell =
+        r.dwell === null
+          ? `<span class="imp-bad">${escapeHtml(r.dwellRaw)}</span>`
+          : r.dwell > 0
+            ? `${r.dwell} 秒`
+            : '<span class="empty-hint">0</span>';
+      const issues = r.issues.length
+        ? `<ul class="imp-issues">${r.issues
+            .map((i) => `<li data-issue="${i.code}">${escapeHtml(i.message)}</li>`)
+            .join('')}</ul>`
+        : '<span class="imp-ok">✅ 可导入</span>';
+      return `<tr class="${r.valid ? 'imp-row-ok' : 'imp-row-err'}">
+        <td>${r.seq}</td>
+        <td>${escapeHtml(r.name || '（空）')}<span class="time-detail">${escapeHtml(r.role || '无角色')}</span>${
+          actorTag ? `<span class="imp-tag ${actorTag.cls}">${actorTag.text}</span>` : ''
+        }</td>
+        <td>${escapeHtml(r.areaName || '（空）')}${
+          areaTag ? `<span class="imp-tag ${areaTag.cls}">${areaTag.text}</span>` : ''
+        }</td>
+        <td>${timeCell}</td>
+        <td>${dwellCell}</td>
+        <td>${escapeHtml(r.note || '')}</td>
+        <td class="imp-issue-cell">${issues}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const newActorList = plan.newActors.length
+    ? `<p class="imp-newactors">将新建演员：${plan.newActors
+        .map((a) => `<strong>${escapeHtml(a.name)}</strong>（${escapeHtml(a.role || '无角色')}）`)
+        .join('、')}</p>`
+    : '';
+
+  const blocked = s.errorRows > 0;
+  const hint = blocked
+    ? `<p class="imp-blocked">🚫 存在 <strong>${s.errorRows}</strong> 个错误行，已禁止提交；请修正 CSV 后重新上传预览。</p>`
+    : `<p class="imp-ready">✅ 全部 <strong>${s.validRows}</strong> 行可导入：将新增 ${s.newActors} 位演员、${s.newCues} 条口令。</p>`;
+
+  $('import-preview').innerHTML = `
+    <div class="imp-chips">${chips}</div>
+    <p class="imp-version">数据版本：<code>${escapeHtml(plan.version.slice(0, 12))}</code>…（提交时若底库已变化将要求重新预览）</p>
+    ${newActorList}
+    ${hint}
+    <div class="imp-table-wrap">
+      <table class="imp-table">
+        <thead><tr><th>#</th><th>姓名 / 角色</th><th>目标区域</th><th>时间</th><th>停留</th><th>说明</th><th>校验结果</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  $('import-submit').disabled = blocked;
+  $('import-actions').classList.remove('hidden');
+}
+
+/** 读取并上传 CSV 生成预览 */
+async function previewImport(csv, fileName) {
+  const plan = await api('/api/import/preview', 'POST', { csv });
+  state.importCsv = csv;
+  state.importPlan = plan;
+  state.importFileName = fileName;
+  $('import-filename').textContent = fileName ? `已选择：${fileName}` : '';
+  $('import-clear').classList.remove('hidden');
+  renderImportMessage();
+  renderImportPlan(plan);
+}
+
+function clearImport() {
+  state.importCsv = null;
+  state.importPlan = null;
+  state.importFileName = '';
+  $('import-file').value = '';
+  $('import-filename').textContent = '';
+  $('import-clear').classList.add('hidden');
+  $('import-preview').innerHTML = '';
+  $('import-actions').classList.add('hidden');
+  renderImportMessage();
+}
+
+function bindImport() {
+  $('import-file').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const csv = await file.text();
+      await previewImport(csv, file.name);
+    } catch (err) {
+      renderImportMessage(`❌ ${escapeHtml(err.message)}`, true);
+      toast(err.message, true);
+    }
+  });
+
+  $('import-clear').addEventListener('click', clearImport);
+
+  $('import-submit').addEventListener('click', async () => {
+    if (!state.importCsv || !state.importPlan) return;
+    if (state.importPlan.summary.errorRows > 0) return;
+    try {
+      const result = await api('/api/import/commit', 'POST', {
+        csv: state.importCsv,
+        version: state.importPlan.version,
+      });
+      const msg = `✅ 导入完成：新增 ${result.createdActors} 位演员、${result.createdCues} 条到位口令，已刷新校验结果。`;
+      clearImport();
+      await refresh();
+      refreshSelects();
+      renderImportMessage(msg);
+      toast(msg);
+    } catch (err) {
+      if (err.status === 409) {
+        renderImportMessage(
+          `⚠️ ${escapeHtml(err.message)}
+           <button type="button" class="btn btn-small btn-accent" id="import-repreview">重新预览</button>`,
+          true
+        );
+        $('import-submit').disabled = true;
+        toast('底库已变化，请重新预览', true);
+      } else {
+        renderImportMessage(`❌ ${escapeHtml(err.message)}`, true);
+        toast(err.message, true);
+      }
+    }
+  });
+
+  // 409 后点击「重新预览」（事件委托，按钮随消息区重绘）
+  $('import-message').addEventListener('click', async (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement) || t.id !== 'import-repreview') return;
+    if (!state.importCsv) return;
+    t.disabled = true;
+    try {
+      await previewImport(state.importCsv, state.importFileName);
+    } catch (err) {
+      renderImportMessage(`❌ ${escapeHtml(err.message)}`, true);
+      toast(err.message, true);
+    }
+  });
+}
+
 /* ---------- 启动 ---------- */
 
 (async function init() {
@@ -1200,6 +1384,7 @@ function bindHeaderActions() {
   bindHeaderActions();
   bindEvacuation();
   bindDependencies();
+  bindImport();
   setMode(state.mode);
   try {
     await refresh();
